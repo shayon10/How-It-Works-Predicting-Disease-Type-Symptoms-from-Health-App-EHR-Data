@@ -1,0 +1,89 @@
+How It Works: Predicting Disease Type & Symptoms from Health App + EHR Data
+Big-picture, end-to-end overview of the system architecture and workflow
+
+0) What the system tries to do
+    • Classify the likely disease type at the present moment (e.g., respiratory vs. cardiometabolic).
+    • Forecast near-term symptoms for the upcoming days (e.g., cough, dyspnea).
+    • Provide safe, actionable suggestions to patients and route signals to care teams.
+1) Data & Consent (Starting Point)
+    1. User consents in the app to link their Electronic Health Record (EHR).
+    2. The app gathers patient-generated data (PGD): daily check-ins, steps, sleep, home vitals, medication reminders.
+    3. A secure connector pulls EHR slices via FHIR APIs: conditions, meds, labs, vitals, encounters, and de‑identified note snippets.
+    4. Identifiers are tokenized; a policy engine enforces purpose limitation and least privilege.
+Data flow: Mobile App & Wearables (PGD) → Ingestion → Tokenization → Data Lake
+2) Ingestion, Cleaning, and Mapping
+    • Normalization: units, time zones, code systems (ICD/SNOMED, LOINC, RxNorm).
+    • Validation: missingness checks, outlier handling, device noise filtering.
+    • Harmonization: common schemas across events, measurements, medications, and problems.
+    • Outputs are written to a point‑in‑time‑correct Feature Store for training and live scoring.
+3) Feature Engineering (Turning Data into Signals)
+    • Time-series signals: rolling means, slopes, variability (e.g., resting HR ↑ week‑over‑week).
+    • Lab signals: z-scores vs. reference ranges, trend flags (e.g., CRP rising).
+    • Medication signals: new starts/stops, adherence proxies (PDC/MPR), polypharmacy counts.
+    • Symptom trajectories: last N days’ severity and co‑occurrence patterns.
+    • Text embeddings: de‑identified phrases from notes encoded by a transformer with negation handling.
+    • Context features: age band, sex, and coarse SDOH indices.
+4) Modeling (Two Tasks, One Ensemble)
+    • Disease type (multi-class now‑cast): gradient-boosted trees + text encoder with late‑fusion head.
+    • Symptom risk (multi-label forecast): time‑series encoder + trees with calibrated probabilities.
+    • Calibration: temperature scaling / isotonic regression for trustworthy probabilities.
+    • Fairness & Drift: slice metrics by subgroups; monitor data & prediction stability.
+5) Live Scoring (When Does It Run?)
+    • Triggers: new user check‑in, wearable sync, or new EHR event (lab, encounter, medication change).
+    • Feature Store materializes a point‑in‑time row; model scores in seconds.
+    • Outputs: top disease class + confidence; top symptom risks with reason codes (e.g., 'RHR↑ + cough↑ + recent URI code').
+6) Decision & Safety Guardrails
+    • Policy layer wraps the model:
+    • • Hard rules for red flags (e.g., chest pain + risk factors → urgent triage, regardless of ML score).
+    • • Thresholds tuned to balance sensitivity vs. alert fatigue.
+    • • Explainability (SHAP + salient text spans) enables clinician trust.
+    • Surfaces:
+    • • Care‑team console: triage queue with suggested actions.
+    • • Patient app: non‑diagnostic guidance, education, and self‑care tips.
+7) Interfaces (Who Sees What)
+    • Patient: simple messages, trend charts, adherence nudges, and when‑to‑call guidance.
+    • Clinician: dashboard card with disease class, 7‑day symptom risks, key drivers, and safe next steps.
+    • Ops/QA: monitoring for drift, subgroup fairness, calibration, and alert volumes.
+8) MLOps & Governance (Keeping It Healthy)
+    • Pipelines: CI/CD for data and models; canary deployments; auto‑rollback if calibration or alerts regress.
+    • Monitoring: data drift, feature gaps, performance by subgroup, alert rates, and intervention uptake.
+    • Feedback loop: clinician dispositions and confirmed outcomes become labels for periodic retraining.
+    • Privacy/Compliance: audit trails, encryption in transit/at rest, retention limits, consent revocation.
+9) Example Day-in-the-Life (Concrete Flow)
+    5. 08:05 — User logs fatigue 6/10 and cough 4/10; wearable shows resting HR +6 bpm vs. baseline.
+    6. 08:06 — Feature Store updates; model scores: Respiratory (0.81); 7‑day dyspnea risk 0.70.
+    7. 08:06 — App displays breathing exercises and when‑to‑seek‑care guidance; care console suggests spirometry.
+    8. 13:40 — New EHR lab (CRP mildly ↑) arrives; score nudges higher; nurse receives a non‑urgent triage task.
+    9. End of week — Clinician marks 'confirmed viral bronchitis'; feedback improves the next retrain.
+10) What Makes It Safe & Useful
+    • Timely: runs at each new signal, not only clinic visits.
+    • Explainable: shows key drivers and calibrated confidence.
+    • Guarded: safety rules override ML in emergencies.
+    • Privacy‑first: de‑identification for training; minimal PHI at runtime; consent‑first.
+    • Continuously improving: learns from outcomes; monitored for bias and drift.
+One-Screen Architecture Map (ASCII)
+[User App/Wearables]     [EHR (FHIR)]
+        |                      |
+        v                      v
+         ------> [Ingestion & Tokenization]
+                           |
+                           v
+                    [Cleaning & Mapping]
+                           |
+                           v
+                      [Feature Store] <---- [Labels/Feedback]
+                           |
+                           v
+ [Time-series Enc]  [GBTs]  [Text Enc]
+           \          |         /
+            \         v        /
+               ---- [Fusion & Calibration] ----
+                           |
+                      [Policy Layer]
+                (guardrails + explainability)
+                           |
+                 +---------+----------+
+                 |                    |
+          [Care-team Console]   [Patient App]
+ 
+Disclaimer: This document is for educational and design-planning purposes only and does not constitute medical advice or a regulated medical device specification.
